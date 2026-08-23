@@ -112,6 +112,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .clock-card::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 10% 0, rgba(104, 169, 255, 0.08), transparent 60%); }
 .clock-card.your-turn { background: linear-gradient(150deg, rgba(72, 214, 168, 0.1), transparent 70%); }
 .clock-card.your-turn::before { background: radial-gradient(circle at 10% 0, rgba(72, 214, 168, 0.13), transparent 60%); }
+.clock-card.expired { background: linear-gradient(150deg, rgba(244, 114, 182, 0.08), transparent 70%); }
 .eyebrow { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
 .eyebrow.accent { color: var(--mint); }
 .pulse-ring { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 4px rgba(104, 169, 255, 0.09); }
@@ -119,9 +120,16 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .pick-number { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 15px; }
 .pick-number strong { font: 800 27px/1 'Manrope', sans-serif; letter-spacing: -0.05em; }
 .pick-number span { color: var(--muted); font-size: 10px; }
-.clock { display: flex; align-items: center; justify-content: center; gap: 5px; margin: 15px 0 12px; }
+.clock-description { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 14px; color: #aab7c8; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.clock-description em { color: #697a91; font-size: 7px; font-style: normal; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.clock { display: flex; align-items: center; justify-content: center; gap: 5px; margin: 7px 0 8px; }
 .clock span { min-width: 49px; padding: 8px; text-align: center; color: #f1f5fb; border: 1px solid var(--line); border-radius: 8px; background: rgba(5, 13, 25, 0.64); font: 700 24px/1 'Manrope', monospace; letter-spacing: 0.03em; }
 .clock i { color: var(--muted); font-style: normal; font-weight: 700; }
+.expired .clock span { color: #f8a3c9; border-color: rgba(244, 114, 182, 0.25); }
+.clock-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 11px; }
+.clock-controls button { display: flex; align-items: center; justify-content: center; gap: 5px; height: 29px; color: #8998ad; border: 1px solid var(--line); border-radius: 7px; background: rgba(7, 16, 30, 0.38); font-size: 8px; }
+.clock-controls button:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); background: var(--panel-soft); }
+.clock-controls button:disabled { opacity: 0.4; }
 .next-turn { display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--muted); font-size: 10px; }
 
 .rail-section { padding: 20px; border-bottom: 1px solid var(--line); }
@@ -250,12 +258,15 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .search-box input::placeholder { color: #5e6d83; }
 .search-box kbd { padding: 3px 5px; color: #637188; border: 1px solid var(--line); border-radius: 4px; background: var(--panel-soft); font: 8px inherit; white-space: nowrap; }
 .autocomplete { position: absolute; z-index: 100; top: calc(100% - 12px); left: 17px; right: 17px; overflow: hidden; max-height: min(330px, 55vh); overflow-y: auto; border: 1px solid rgba(104, 169, 255, 0.28); border-radius: 10px; background: #101d30; box-shadow: 0 24px 55px rgba(1, 7, 16, 0.78), 0 0 0 1px rgba(255, 255, 255, 0.025); scrollbar-width: thin; scrollbar-color: #31435b transparent; }
-.auto-label { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 11px; color: #7e8da3; border-bottom: 1px solid var(--line); background: rgba(12, 25, 42, 0.97); font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; backdrop-filter: blur(10px); }
+.auto-label { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 41px 9px 11px; color: #7e8da3; border-bottom: 1px solid var(--line); background: rgba(12, 25, 42, 0.97); font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; backdrop-filter: blur(10px); }
 .auto-label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auto-label em { flex: 0 0 auto; color: var(--mint); font-size: 7px; font-style: normal; letter-spacing: 0.025em; text-transform: none; }
 .autocomplete button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 10px; color: var(--text); border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; }
 .autocomplete button:last-child { border-bottom: 0; }
 .autocomplete button:hover, .autocomplete button:focus-visible { outline-offset: -2px; background: rgba(72, 214, 168, 0.08); }
+.autocomplete > button.highlighted { background: rgba(72, 214, 168, 0.075); }
+.autocomplete .close-autocomplete { position: absolute; top: 50%; right: 7px; width: 27px; height: 27px; justify-content: center; padding: 0; color: #8292a8; border: 0; border-radius: 6px; transform: translateY(-50%); }
+.autocomplete .close-autocomplete:hover, .autocomplete .close-autocomplete:focus-visible { color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .autocomplete button > span { min-width: 0; }
 .autocomplete button strong { display: block; font-size: 10px; }
 .autocomplete button small { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }

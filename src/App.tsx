@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   Activity, BarChart3, BrainCircuit, Check, ChevronDown, CircleHelp, Database,
-  Download, GripVertical, Info, Minus, Plus, RotateCcw, Search, Settings,
+  Download, GripVertical, Info, Minus, Pause, Play, Plus, RotateCcw, Search, Settings,
   ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, TrendingUp, Undo2,
-  Upload, UserRoundCheck, Users, X, Zap,
+  TimerReset, Upload, UserRoundCheck, Users, X, Zap,
 } from 'lucide-react';
 import { players as demoPlayers, dataUpdatedAt } from './data/players';
 import { providers } from './data/providers';
@@ -25,6 +25,7 @@ const DEMO_PICK_IDS = [
   'justin-jefferson-min', 'ceedee-lamb-dal', 'puka-nacua-lar',
 ];
 const SLEEPER_SYNC_INTERVAL_MS = 10_000;
+const DEFAULT_PICK_CLOCK_SECONDS = 120;
 
 function initialState(): DraftState {
   const saved = loadState();
@@ -71,6 +72,7 @@ function App() {
   const [playerDataStatus, setPlayerDataStatus] = useState<'loading' | 'downloaded' | 'demo' | 'error'>('loading');
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchHighlight, setSearchHighlight] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [selected, setSelected] = useState(0);
@@ -78,8 +80,12 @@ function App() {
   const [entryTeamIndex, setEntryTeamIndex] = useState(0);
   const [unknownPosition, setUnknownPosition] = useState<Position>('WR');
   const [lastRecorded, setLastRecorded] = useState<{ playerId: string; teamIndex: number; previousTopId?: string } | null>(null);
+  const [clockSeconds, setClockSeconds] = useState(DEFAULT_PICK_CLOCK_SECONDS);
+  const [clockRunning, setClockRunning] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchSectionRef = useRef<HTMLDivElement>(null);
+  const clockDeadlineRef = useRef(Date.now() + DEFAULT_PICK_CLOCK_SECONDS * 1000);
   const syncingSleeper = useRef(false);
 
   useEffect(() => saveState(state), [state]);
@@ -110,6 +116,27 @@ function App() {
     const timeout = window.setTimeout(() => setToast(''), 2600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (searchSectionRef.current && !searchSectionRef.current.contains(event.target as Node)) setSearchOpen(false);
+    };
+    const handleKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSearchOpen(false);
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(true);
+        searchInputRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyboard);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyboard);
+    };
+  }, []);
 
   const ranked = useMemo(() => recommendations(state, playerPool), [state, playerPool]);
   const top = ranked[0];
@@ -124,6 +151,58 @@ function App() {
   const ownCounts = rosterCounts(state.picks, state.userTeamIndex, playerPool);
   const ownPicks = state.picks.filter((pick) => pick.teamIndex === state.userTeamIndex)
     .map((pick) => playerPool.find((player) => player.id === pick.playerId)).filter(Boolean) as Player[];
+
+  useEffect(() => {
+    clockDeadlineRef.current = Date.now() + DEFAULT_PICK_CLOCK_SECONDS * 1000;
+    setClockSeconds(DEFAULT_PICK_CLOCK_SECONDS);
+    setClockRunning(true);
+  }, [currentOverall]);
+  useEffect(() => {
+    if (!clockRunning) return;
+    const updateClock = () => setClockSeconds(Math.max(0, Math.ceil((clockDeadlineRef.current - Date.now()) / 1000)));
+    updateClock();
+    // Recompute from an absolute deadline so background-tab throttling cannot make the timer drift.
+    const interval = window.setInterval(updateClock, 250);
+    return () => window.clearInterval(interval);
+  }, [clockRunning]);
+  useEffect(() => setSearchHighlight(0), [query, matches.length]);
+
+  const clockMinutes = Math.floor(clockSeconds / 60);
+  const clockRemainder = clockSeconds % 60;
+  const toggleClock = () => {
+    if (clockRunning) {
+      setClockSeconds(Math.max(0, Math.ceil((clockDeadlineRef.current - Date.now()) / 1000)));
+      setClockRunning(false);
+    } else if (clockSeconds > 0) {
+      clockDeadlineRef.current = Date.now() + clockSeconds * 1000;
+      setClockRunning(true);
+    }
+  };
+  const resetClock = () => {
+    clockDeadlineRef.current = Date.now() + DEFAULT_PICK_CLOCK_SECONDS * 1000;
+    setClockSeconds(DEFAULT_PICK_CLOCK_SECONDS);
+    setClockRunning(true);
+  };
+  const handleSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setSearchOpen(false);
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSearchOpen(true);
+      setSearchHighlight((current) => {
+        if (!matches.length) return 0;
+        return event.key === 'ArrowDown' ? (current + 1) % matches.length : (current - 1 + matches.length) % matches.length;
+      });
+      return;
+    }
+    if (event.key === 'Enter' && searchOpen && matches[searchHighlight]) {
+      event.preventDefault();
+      addPick(matches[searchHighlight]);
+    }
+  };
 
   useEffect(() => setEntryTeamIndex(currentTeam), [currentTeam]);
 
@@ -244,10 +323,12 @@ function App() {
 
       <main className="workspace">
         <aside className="left-rail">
-          <section className={`clock-card ${isUserTurn ? 'your-turn' : ''}`}>
+          <section className={`clock-card ${isUserTurn ? 'your-turn' : ''} ${clockSeconds === 0 ? 'expired' : ''}`}>
             <div className="eyebrow"><span className="pulse-ring" /> {teamLabel(currentTeam)} — on the clock</div>
             <div className="pick-number"><strong>{round}.{String(pickInRound).padStart(2, '0')}</strong><span>Pick {currentOverall} overall</span></div>
-            <div className="clock"><span>01</span><i>:</i><span>42</span></div>
+            <div className="clock-description"><span>Local pick timer</span><em>Not synced to Sleeper</em></div>
+            <div className="clock" role="timer" aria-label={`${clockMinutes} minutes ${clockRemainder} seconds remaining`}><span>{String(clockMinutes).padStart(2, '0')}</span><i>:</i><span>{String(clockRemainder).padStart(2, '0')}</span></div>
+            <div className="clock-controls"><button aria-label={clockRunning ? 'Pause pick timer' : 'Resume pick timer'} onClick={toggleClock} disabled={clockSeconds === 0}>{clockRunning ? <Pause size={13} /> : <Play size={13} />}{clockRunning ? 'Pause' : 'Resume'}</button><button aria-label="Reset pick timer to two minutes" onClick={resetClock}><TimerReset size={13} /> Reset 2:00</button></div>
             <div className="next-turn"><Target size={15} /> Your slot: {state.settings.draftSlot}</div>
           </section>
 
@@ -331,7 +412,7 @@ function App() {
         </section>
 
         <aside className="right-rail">
-          <div className="search-section">
+          <div className="search-section" ref={searchSectionRef}>
             <div className="entry-kicker"><span className="pulse-ring" /> Live draft entry · Pick {currentOverall}</div>
             <h2>Who did they draft?</h2>
             <p className="entry-help">Choose the team on the clock, then select the player they just picked. Your recommendations recalculate immediately.</p>
@@ -343,11 +424,11 @@ function App() {
             </label>
             <label className="manager-picker"><span>Person picking</span><div><Users size={16} /><input value={state.settings.managerNames[entryTeamIndex] ?? ''} placeholder={`Manager ${entryTeamIndex + 1}`} onChange={(event) => renameManager(entryTeamIndex, event.target.value)} /><em>Team {entryTeamIndex + 1}</em></div></label>
             <label className="player-picker"><span>Player selected</span>
-              <div className="search-box"><Search size={17} /><input ref={searchInputRef} value={query} placeholder={`Search the player ${teamLabel(entryTeamIndex)} drafted`} onFocus={() => setSearchOpen(true)} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} /><kbd>⌘ K</kbd></div>
+              <div className="search-box"><Search size={17} /><input ref={searchInputRef} role="combobox" aria-label="Player selected" aria-autocomplete="list" aria-expanded={searchOpen} aria-controls="player-search-menu" aria-activedescendant={searchOpen && matches[searchHighlight] ? `player-option-${matches[searchHighlight].id}` : undefined} value={query} placeholder={`Search the player ${teamLabel(entryTeamIndex)} drafted`} onFocus={() => setSearchOpen(true)} onKeyDown={handleSearchKeyDown} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} /><kbd>⌘ K</kbd></div>
             </label>
-            {searchOpen && <div className="autocomplete">
-              <div className="auto-label"><span>{query ? `Best matches for “${query}”` : 'Top available'}</span><em>Recording for {teamLabel(entryTeamIndex)}</em></div>
-              {matches.map((player) => <button key={player.id} onClick={() => addPick(player)}><PlayerAvatar player={player} /><span><strong>{player.name}</strong><small>{player.position} · {player.team}</small></span><em>ADP {player.adp}</em></button>)}
+            {searchOpen && <div className="autocomplete" id="player-search-menu" role="listbox" aria-label="Available players">
+              <div className="auto-label"><span>{query ? `Best matches for “${query}”` : 'Top available'}</span><em>Recording for {teamLabel(entryTeamIndex)}</em><button className="close-autocomplete" aria-label="Close player selection" onClick={() => setSearchOpen(false)}><X size={14} /></button></div>
+              {matches.map((player, index) => <button id={`player-option-${player.id}`} role="option" aria-selected={index === searchHighlight} className={index === searchHighlight ? 'highlighted' : ''} key={player.id} onMouseEnter={() => setSearchHighlight(index)} onClick={() => addPick(player)}><PlayerAvatar player={player} /><span><strong>{player.name}</strong><small>{player.position} · {player.team}</small></span><em>ADP {player.adp}</em></button>)}
               {!matches.length && <div className="unlisted-player">
                 <div><strong>No close match found</strong><span>Keep the draft moving by recording the name and position. No performance estimate will be invented.</span></div>
                 <label><span>Position</span><select value={unknownPosition} onChange={(event) => setUnknownPosition(event.target.value as Position)}>{(['QB', 'RB', 'WR', 'TE', 'K', 'DST'] as Position[]).map((position) => <option key={position}>{position}</option>)}</select></label>
