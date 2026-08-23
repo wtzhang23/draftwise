@@ -1,0 +1,53 @@
+# JavaScript dependencies, local toolchains, and build output
+.git/
+node_modules/
+dist/
+.tools/
+.cache/
+.agents/
+.codex/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+*.log
+
+# Credentials and machine-local configuration
+.env
+.env.*
+!.env.example
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Python environments, bytecode, and tooling caches
+.venv/
+.venv-*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Temporary and raw downloaded source data
+tmp/
+temp/
+.downloads/
+data/raw/
+data/downloads/
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db

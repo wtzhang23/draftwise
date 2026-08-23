@@ -1,0 +1,27 @@
+{
+  "name": "draftwise-fantasy-draft-tool",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "data:download": "node scripts/download_player_data.mjs",
+    "backtest": "vitest run src/lib/backtest.test.ts --reporter=verbose",
+    "backtest:historical": "vitest run --config vitest.historical.config.ts --reporter=verbose"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "lucide-react": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "vitest": "latest"
+  }
+}
