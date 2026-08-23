@@ -8,6 +8,16 @@ interface SleeperLeague {
   roster_positions?: string[];
 }
 
+interface SleeperUser {
+  user_id: string;
+  display_name?: string | null;
+}
+
+interface SleeperRoster {
+  roster_id: number;
+  owner_id?: string | null;
+}
+
 interface SleeperPick {
   pick_no: number;
   draft_slot: number;
@@ -23,22 +33,49 @@ export interface SleeperPickImport {
 const formatRoster = (positions: string[] = []) => {
   const next = { ...DEFAULT_SETTINGS.roster, QB: 0, RB: 0, WR: 0, TE: 0, FLEX: 0, K: 0, DST: 0, BENCH: 0 };
   positions.forEach((position) => {
-    const normalized = position === 'DEF' ? 'DST' : position === 'SUPER_FLEX' || position === 'REC_FLEX' || position === 'WRRB_FLEX' ? 'FLEX' : position;
+    const normalized = position === 'DEF' ? 'DST'
+      : position === 'BN' ? 'BENCH'
+        : position === 'SUPER_FLEX' || position === 'REC_FLEX' || position === 'WRRB_FLEX' ? 'FLEX' : position;
     if (normalized in next) next[normalized as keyof typeof next] += 1;
   });
   return next;
 };
 
 export async function importSleeperLeague(leagueId: string): Promise<LeagueSettings> {
-  const response = await fetch(`https://api.sleeper.app/v1/league/${encodeURIComponent(leagueId.trim())}`);
+  const normalizedId = encodeURIComponent(leagueId.trim());
+  const response = await fetch(`https://api.sleeper.app/v1/league/${normalizedId}`);
   if (!response.ok) throw new Error('Sleeper league not found. Check the ID and try again.');
   const league = await response.json() as SleeperLeague;
   const score = league.scoring_settings ?? {};
+  const teams = league.total_rosters || DEFAULT_SETTINGS.teams;
+  const managerNames = defaultManagerNames(teams);
+
+  const safelyFetch = async <T>(path: string): Promise<T[]> => {
+    try {
+      const auxiliaryResponse = await fetch(`https://api.sleeper.app/v1/league/${normalizedId}/${path}`);
+      if (!auxiliaryResponse.ok) return [];
+      const payload = await auxiliaryResponse.json();
+      return Array.isArray(payload) ? payload as T[] : [];
+    } catch {
+      return [];
+    }
+  };
+  const [users, rosters] = await Promise.all([
+    safelyFetch<SleeperUser>('users'),
+    safelyFetch<SleeperRoster>('rosters'),
+  ]);
+  const displayNames = new Map(users.map((user) => [user.user_id, user.display_name?.trim()]));
+  rosters.forEach((roster) => {
+    const slot = roster.roster_id - 1;
+    const displayName = roster.owner_id ? displayNames.get(roster.owner_id) : undefined;
+    if (slot >= 0 && slot < teams && displayName) managerNames[slot] = displayName;
+  });
+
   return {
     ...DEFAULT_SETTINGS,
     name: league.name || DEFAULT_SETTINGS.name,
-    teams: league.total_rosters || DEFAULT_SETTINGS.teams,
-    managerNames: defaultManagerNames(league.total_rosters || DEFAULT_SETTINGS.teams),
+    teams,
+    managerNames,
     roster: formatRoster(league.roster_positions),
     scoringLabel: 'Sleeper import',
     scoring: {

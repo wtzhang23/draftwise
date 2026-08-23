@@ -300,24 +300,52 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .sleeper-import strong { font-size: 10px; }
 .sleeper-import span { margin-top: 2px; color: var(--muted); font-size: 8px; }
 .sleeper-import small { grid-column: 1 / -1; color: var(--danger); font-size: 9px; }
+.league-size-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.league-size-summary > div { display: flex; align-items: center; gap: 9px; padding: 10px; color: var(--blue); border: 1px solid var(--line); border-radius: 9px; background: rgba(7, 16, 30, 0.35); }
+.league-size-summary span, .league-size-summary strong { display: block; }
+.league-size-summary span { color: var(--muted); font-size: 8px; }
+.league-size-summary strong { margin-top: 2px; color: #e0e9f5; font-size: 10px; }
 .modal input, .modal select { width: 100%; height: 38px; padding: 0 10px; color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; outline: 0; background: #0a1626; font-size: 10px; }
 .modal input:focus, .modal select:focus { border-color: rgba(72, 214, 168, 0.65); box-shadow: 0 0 0 3px rgba(72, 214, 168, 0.09); }
 .form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 13px; margin-top: 18px; }
 .form-grid .wide { grid-column: 1 / -1; }
 .form-grid label > span { display: block; margin-bottom: 6px; color: #9ba8bb; font-size: 9px; font-weight: 600; }
 .manager-config { margin-top: 18px; padding: 16px; border: 1px solid rgba(104, 169, 255, 0.16); border-radius: 11px; background: rgba(104, 169, 255, 0.04); }
-.manager-config > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.manager-config > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.manager-config > div:first-child strong, .manager-config > div:first-child span { display: block; }
 .manager-config > div:first-child strong { color: #dce6f4; font-size: 10px; }
-.manager-config > div:first-child span { color: var(--muted); font-size: 8px; }
-.manager-config > div:last-child { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; max-height: 220px; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; scrollbar-color: #31435b transparent; }
-.manager-config label { min-width: 0; }
-.manager-config label > span { display: block; margin-bottom: 5px; color: #8f9db1; font-size: 8px; font-weight: 600; }
-.manager-config input { height: 35px; }
+.manager-config > div:first-child span { margin-top: 3px; color: var(--muted); font-size: 8px; }
+.manager-config .add-team { flex: 0 0 auto; }
+.team-order-list { display: grid; gap: 7px; max-height: 300px; overflow-y: auto; padding-right: 3px; scrollbar-width: thin; scrollbar-color: #31435b transparent; }
+.team-order-card { display: grid; grid-template-columns: 27px 28px minmax(130px, 1fr) 88px 28px; align-items: center; gap: 7px; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: rgba(7, 16, 30, 0.45); transition: border-color 150ms ease, opacity 150ms ease, background 150ms ease; }
+.team-order-card.is-user { border-color: rgba(72, 214, 168, 0.3); background: rgba(72, 214, 168, 0.055); }
+.team-order-card.dragging { opacity: 0.45; border-style: dashed; }
+.drag-handle, .you-button, .remove-team, .slot-stepper button { display: inline-flex; align-items: center; justify-content: center; color: #718198; border: 0; background: transparent; }
+.drag-handle { height: 32px; cursor: grab; touch-action: none; }
+.drag-handle:active { cursor: grabbing; }
+.draft-slot { display: grid; place-items: center; width: 26px; height: 26px; color: var(--blue); border-radius: 7px; background: rgba(104, 169, 255, 0.1); font: 800 9px 'Manrope', sans-serif; }
+.team-order-card label { min-width: 0; }
+.team-order-card label > span { display: block; margin-bottom: 3px; color: #7f8ea3; font-size: 7px; text-transform: uppercase; }
+.team-order-card input { height: 31px; }
+.you-button { gap: 5px; height: 30px; padding: 0 7px; border: 1px solid var(--line); border-radius: 7px; font-size: 8px; white-space: nowrap; }
+.you-button.active { color: var(--mint); border-color: rgba(72, 214, 168, 0.25); background: rgba(72, 214, 168, 0.08); }
+.remove-team { width: 28px; height: 28px; border-radius: 7px; }
+.remove-team:hover:not(:disabled) { color: var(--danger); background: rgba(244, 114, 182, 0.08); }
+.remove-team:disabled { opacity: 0.25; }
+.team-order-note { display: block; margin-top: 9px; color: #697a91; font-size: 8px; line-height: 1.45; }
 .roster-config { margin-top: 18px; padding-top: 17px; border-top: 1px solid var(--line); }
-.roster-config > strong { font-size: 10px; }
+.roster-config > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.roster-config > div:first-child strong { font-size: 10px; }
+.roster-config > div:first-child span { color: var(--muted); font-size: 8px; }
 .roster-config > div { display: grid; grid-template-columns: repeat(6, 1fr); gap: 7px; margin-top: 10px; }
+.roster-config > div:first-child { display: flex; margin-top: 0; }
 .roster-config label span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 8px; text-align: center; text-transform: uppercase; }
 .roster-config input { padding: 0 3px; text-align: center; }
+.slot-stepper { display: grid; grid-template-columns: 27px minmax(32px, 1fr) 27px; align-items: center; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 8px; background: #0a1626; }
+.slot-stepper input { height: 34px; border: 0; border-radius: 0; appearance: textfield; }
+.slot-stepper input::-webkit-inner-spin-button { appearance: none; }
+.slot-stepper button { height: 34px; }
+.slot-stepper button:hover { color: var(--mint); background: rgba(72, 214, 168, 0.07); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 9px; margin-top: 22px; }
 
 .source-callout { display: flex; align-items: flex-start; gap: 11px; padding: 13px; color: var(--mint); border: 1px solid rgba(72, 214, 168, 0.18); border-radius: 10px; background: rgba(72, 214, 168, 0.055); }
@@ -425,7 +453,7 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .form-grid .wide { grid-column: auto; }
   .sleeper-import { grid-template-columns: 1fr auto; }
   .sleeper-import > div { grid-column: 1 / -1; }
-  .manager-config > div:last-child { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .team-order-list { grid-template-columns: 1fr; }
   .roster-config > div { grid-template-columns: repeat(3, 1fr); }
 }
 
@@ -454,11 +482,14 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
   .modal-backdrop { align-items: end; padding: 0; }
   .modal { max-height: 92vh; padding: 19px 16px; border-radius: 17px 17px 0 0; }
   .modal-head h2 { font-size: 21px; }
+  .league-size-summary { grid-template-columns: 1fr; }
   .sleeper-import { grid-template-columns: 1fr; }
   .sleeper-import > div, .sleeper-import small { grid-column: auto; }
   .manager-config { padding: 13px; }
   .manager-config > div:first-child { align-items: flex-start; flex-direction: column; gap: 3px; }
-  .manager-config > div:last-child { grid-template-columns: 1fr; max-height: 245px; }
+  .team-order-list { grid-template-columns: 1fr; max-height: 285px; }
+  .team-order-card { grid-template-columns: 25px 27px minmax(90px, 1fr) 72px 27px; gap: 5px; padding: 6px; }
+  .you-button { padding-inline: 5px; }
   .modal-actions .button { flex: 1; }
   .data-date { flex-direction: column; }
 }

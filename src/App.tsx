@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import {
   Activity, BarChart3, BrainCircuit, Check, ChevronDown, CircleHelp, Database,
-  Download, Info, RotateCcw, Search, Settings, ShieldCheck, SlidersHorizontal,
-  Sparkles, Target, TrendingUp, Undo2, Upload, Users, X, Zap,
+  Download, GripVertical, Info, Minus, Plus, RotateCcw, Search, Settings,
+  ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, TrendingUp, Undo2,
+  Upload, UserRoundCheck, Users, X, Zap,
 } from 'lucide-react';
 import { players as demoPlayers, dataUpdatedAt } from './data/players';
 import { providers } from './data/providers';
@@ -374,7 +375,19 @@ function App() {
         </aside>
       </main>
 
-      {settingsOpen && <SettingsModal state={state} onClose={() => setSettingsOpen(false)} onSave={(settings, userTeamIndex) => { setState({ ...state, settings, userTeamIndex }); setSettingsOpen(false); setToast('League settings saved'); }} />}
+      {settingsOpen && <SettingsModal state={state} onClose={() => setSettingsOpen(false)} onSave={(settings, userTeamIndex, oldToNewTeamIndex) => {
+        setState((previous) => ({
+          ...previous,
+          settings: { ...settings, draftSlot: userTeamIndex + 1 },
+          userTeamIndex,
+          picks: previous.picks.map((pick) => ({
+            ...pick,
+            teamIndex: oldToNewTeamIndex[pick.teamIndex] ?? Math.min(pick.teamIndex, settings.teams - 1),
+          })),
+        }));
+        setSettingsOpen(false);
+        setToast('League size and draft order saved');
+      }} />}
       {sourcesOpen && <SourcesModal
         onClose={() => setSourcesOpen(false)}
         status={playerDataStatus}
@@ -392,41 +405,107 @@ function App() {
   );
 }
 
-function SettingsModal({ state, onClose, onSave }: { state: DraftState; onClose: () => void; onSave: (settings: LeagueSettings, userTeamIndex: number) => void }) {
+interface ConfigTeam {
+  id: string;
+  name: string;
+  originalIndex?: number;
+}
+
+const MIN_LEAGUE_TEAMS = 2;
+const MAX_LEAGUE_TEAMS = 32;
+
+function SettingsModal({ state, onClose, onSave }: {
+  state: DraftState;
+  onClose: () => void;
+  onSave: (settings: LeagueSettings, userTeamIndex: number, oldToNewTeamIndex: Record<number, number>) => void;
+}) {
   const [settings, setSettings] = useState(structuredClone(state.settings));
-  const [teamIndex, setTeamIndex] = useState(state.userTeamIndex);
+  const [teams, setTeams] = useState<ConfigTeam[]>(() => Array.from({ length: state.settings.teams }, (_, index) => ({
+    id: `original-${index}`,
+    name: state.settings.managerNames[index] ?? `Manager ${index + 1}`,
+    originalIndex: index,
+  })));
+  const [userTeamId, setUserTeamId] = useState(`original-${state.userTeamIndex}`);
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [leagueId, setLeagueId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const newTeamSequence = useRef(0);
+  const teamIndex = Math.max(0, teams.findIndex((team) => team.id === userTeamId));
+  const rosterSize = Object.values(settings.roster).reduce((total, slots) => total + slots, 0);
+  const totalDraftSelections = teams.length * rosterSize;
   const setRoster = (key: keyof RosterSettings, value: number) => setSettings({ ...settings, roster: { ...settings.roster, [key]: value } });
-  const setManagerName = (index: number, value: string) => {
-    const managerNames = [...settings.managerNames];
-    managerNames[index] = value;
-    setSettings({ ...settings, managerNames });
+  const updateTeamName = (id: string, name: string) => setTeams((current) => current.map((team) => team.id === id ? { ...team, name } : team));
+  const moveTeam = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0 || from >= teams.length || to >= teams.length) return;
+    setTeams((current) => {
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
   };
-  const setTeamCount = (teams: number) => setSettings({
-    ...settings,
-    teams,
-    managerNames: Array.from({ length: teams }, (_, index) => settings.managerNames[index] ?? `Manager ${index + 1}`),
-  });
+  const addTeam = () => {
+    if (teams.length >= MAX_LEAGUE_TEAMS) return;
+    newTeamSequence.current += 1;
+    setTeams((current) => [...current, {
+      id: `new-${Date.now()}-${newTeamSequence.current}`,
+      name: `Manager ${current.length + 1}`,
+    }]);
+  };
+  const removeTeam = (team: ConfigTeam) => {
+    if (teams.length <= MIN_LEAGUE_TEAMS) return;
+    const next = teams.filter((candidate) => candidate.id !== team.id);
+    setTeams(next);
+    if (userTeamId === team.id) setUserTeamId(next[0].id);
+  };
+  const hasRecordedPicks = (team: ConfigTeam) => team.originalIndex !== undefined
+    && state.picks.some((pick) => pick.teamIndex === team.originalIndex);
   const importSleeper = async () => {
     setLoading(true); setError('');
-    try { setSettings(await importSleeperLeague(leagueId)); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Import failed'); } finally { setLoading(false); }
+    try {
+      const imported = await importSleeperLeague(leagueId);
+      setSettings(imported);
+      const importedTeams = Array.from({ length: imported.teams }, (_, index) => ({
+        id: index < state.settings.teams ? `original-${index}` : `imported-${index}`,
+        name: imported.managerNames[index] ?? `Manager ${index + 1}`,
+        originalIndex: index < state.settings.teams ? index : undefined,
+      }));
+      setTeams(importedTeams);
+      if (!importedTeams.some((team) => team.id === userTeamId)) setUserTeamId(importedTeams[0]?.id ?? '');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Import failed'); } finally { setLoading(false); }
+  };
+  const saveLeague = () => {
+    const managerNames = teams.map((team, index) => team.name.trim() || `Manager ${index + 1}`);
+    const oldToNewTeamIndex = Object.fromEntries(teams.flatMap((team, index) =>
+      team.originalIndex === undefined ? [] : [[team.originalIndex, index]]));
+    onSave({ ...settings, teams: teams.length, managerNames }, teamIndex, oldToNewTeamIndex);
   };
   return <div className="modal-backdrop" onMouseDown={onClose}><div className="modal settings-modal" onMouseDown={(event) => event.stopPropagation()}>
-    <div className="modal-head"><div><div className="eyebrow accent"><Settings size={14} /> League configuration</div><h2>Make the model yours</h2><p>Start manually or use Sleeper for league context. Every field remains editable.</p></div><button className="icon-button" onClick={onClose}><X size={20} /></button></div>
-    <div className="sleeper-import"><div><strong>Import from Sleeper</strong><span>League, roster and scoring settings only</span></div><input placeholder="Sleeper league ID" value={leagueId} onChange={(event) => setLeagueId(event.target.value)} /><button className="button secondary" disabled={!leagueId || loading} onClick={importSleeper}>{loading ? 'Importing…' : 'Import'}</button>{error && <small>{error}</small>}</div>
+    <div className="modal-head"><div><div className="eyebrow accent"><Settings size={14} /> League configuration</div><h2>Set up your draft room</h2><p>Add exactly the people in your league, drag them into draft order, then mark your team.</p></div><button className="icon-button" onClick={onClose}><X size={20} /></button></div>
+    <div className="sleeper-import"><div><strong>Import from Sleeper</strong><span>League members, roster slots and scoring</span></div><input placeholder="Sleeper league ID" value={leagueId} onChange={(event) => setLeagueId(event.target.value)} /><button className="button secondary" disabled={!leagueId || loading} onClick={importSleeper}>{loading ? 'Importing…' : 'Import league'}</button>{error && <small>{error}</small>}</div>
+    <div className="league-size-summary"><div><Users size={18} /><span>League size<strong>{teams.length} managers</strong></span></div><div><Target size={18} /><span>Roster size<strong>{rosterSize} per team</strong></span></div><div><BarChart3 size={18} /><span>Total draft picks<strong>{totalDraftSelections}</strong></span></div></div>
     <div className="form-grid">
       <label className="wide"><span>League name</span><input value={settings.name} onChange={(event) => setSettings({ ...settings, name: event.target.value })} /></label>
-      <label><span>Teams</span><select value={settings.teams} onChange={(event) => setTeamCount(Number(event.target.value))}>{[8, 10, 12, 14, 16].map((n) => <option key={n}>{n}</option>)}</select></label>
-      <label><span>Your draft slot</span><input type="number" min="1" max={settings.teams} value={teamIndex + 1} onChange={(event) => setTeamIndex(Math.max(0, Number(event.target.value) - 1))} /></label>
       <label><span>Draft format</span><select value={settings.format} onChange={(event) => setSettings({ ...settings, format: event.target.value as LeagueSettings['format'] })}><option value="snake">Snake</option><option value="linear">Linear</option><option value="third-round-reversal">Third-round reversal</option><option value="auction">Auction</option></select></label>
       <label><span>Reception points</span><select value={settings.scoring.reception} onChange={(event) => setSettings({ ...settings, scoringLabel: Number(event.target.value) === 1 ? 'Full PPR' : Number(event.target.value) === 0.5 ? 'Half PPR' : 'Standard', scoring: { ...settings.scoring, reception: Number(event.target.value) } })}><option value="1">1.0 · Full PPR</option><option value="0.5">0.5 · Half PPR</option><option value="0">0 · Standard</option></select></label>
       <label><span>Passing TD</span><input type="number" value={settings.scoring.passingTd} onChange={(event) => setSettings({ ...settings, scoring: { ...settings.scoring, passingTd: Number(event.target.value) } })} /></label>
     </div>
-    <div className="manager-config"><div><strong>People in this draft</strong><span>Name each manager so live pick entry is easy to follow.</span></div><div>{Array.from({ length: settings.teams }, (_, index) => <label key={index}><span>Team {index + 1}{index === teamIndex ? ' · You' : ''}</span><input value={settings.managerNames[index] ?? ''} placeholder={`Manager ${index + 1}`} onChange={(event) => setManagerName(index, event.target.value)} /></label>)}</div></div>
-    <div className="roster-config"><strong>Roster slots</strong><div>{(Object.keys(settings.roster) as Array<keyof RosterSettings>).map((key) => <label key={key}><span>{key}</span><input type="number" min="0" max="12" value={settings.roster[key]} onChange={(event) => setRoster(key, Number(event.target.value))} /></label>)}</div></div>
-    <div className="modal-actions"><button className="button ghost" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onSave(settings, teamIndex)}>Save league</button></div>
+    <div className="manager-config"><div><div><strong>People and draft order</strong><span>Drag the grip to reorder. Pick 1 is first in the opening round.</span></div><button className="button secondary add-team" disabled={teams.length >= MAX_LEAGUE_TEAMS} onClick={addTeam}><Plus size={14} /> Add person</button></div><div className="team-order-list">{teams.map((team, index) => {
+      const isUser = team.id === userTeamId;
+      const cannotRemove = teams.length <= MIN_LEAGUE_TEAMS || hasRecordedPicks(team);
+      return <div className={`team-order-card ${isUser ? 'is-user' : ''} ${draggingIndex === index ? 'dragging' : ''}`} key={team.id}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => { event.preventDefault(); if (draggingIndex !== null) moveTeam(draggingIndex, index); setDraggingIndex(null); }}>
+        <button className="drag-handle" draggable aria-label={`Drag ${team.name || `Manager ${index + 1}`}`} onDragStart={() => setDraggingIndex(index)} onDragEnd={() => setDraggingIndex(null)}><GripVertical size={17} /></button>
+        <span className="draft-slot">{index + 1}</span>
+        <label><span>Manager or team name</span><input value={team.name} placeholder={`Manager ${index + 1}`} onChange={(event) => updateTeamName(team.id, event.target.value)} /></label>
+        <button className={`you-button ${isUser ? 'active' : ''}`} onClick={() => setUserTeamId(team.id)}><UserRoundCheck size={14} /> {isUser ? 'You' : 'Set as you'}</button>
+        <button className="remove-team" disabled={cannotRemove} title={hasRecordedPicks(team) ? 'This team has recorded picks' : 'Remove person'} onClick={() => removeTeam(team)}><Trash2 size={14} /></button>
+      </div>;
+    })}</div><small className="team-order-note">Reordering also reassigns any recorded picks to the same manager. Teams with recorded picks cannot be removed.</small></div>
+    <div className="roster-config"><div><strong>Roster slots</strong><span>{rosterSize} players per manager · {totalDraftSelections} total selections</span></div><div>{(Object.keys(settings.roster) as Array<keyof RosterSettings>).map((key) => <label key={key}><span>{key}</span><div className="slot-stepper"><button onClick={() => setRoster(key, Math.max(0, settings.roster[key] - 1))}><Minus size={13} /></button><input type="number" min="0" max="24" value={settings.roster[key]} onChange={(event) => setRoster(key, Math.max(0, Number(event.target.value)))} /><button onClick={() => setRoster(key, Math.min(24, settings.roster[key] + 1))}><Plus size={13} /></button></div></label>)}</div></div>
+    <div className="modal-actions"><button className="button ghost" onClick={onClose}>Cancel</button><button className="button primary" onClick={saveLeague}>Save league and order</button></div>
   </div></div>;
 }
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Player } from '../types';
-import { importSleeperDraftPicks } from './sleeper';
+import { importSleeperDraftPicks, importSleeperLeague } from './sleeper';
 
 const player = (id: string, name: string, sleeper?: string): Player => ({
   id, name, team: 'BUF', position: 'WR', bye: 7, projectedPoints: 200, floor: 150,
@@ -12,6 +12,45 @@ const player = (id: string, name: string, sleeper?: string): Player => ({
 });
 
 afterEach(() => vi.restoreAllMocks());
+
+describe('Sleeper league import', () => {
+  it('maps user display names into their one-based roster slots', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        name: 'Friends League', total_rosters: 3, roster_positions: ['QB', 'RB', 'BN'],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { user_id: 'user-a', display_name: 'Alice' },
+        { user_id: 'user-b', display_name: ' Bob ' },
+      ]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        { roster_id: 2, owner_id: 'user-b' },
+        { roster_id: 1, owner_id: 'user-a' },
+        { roster_id: 3, owner_id: null },
+      ]), { status: 200 })));
+
+    const settings = await importSleeperLeague('league-1');
+
+    expect(settings.managerNames).toEqual(['Alice', 'Bob', 'Manager 3']);
+    expect(settings.roster.BENCH).toBe(1);
+    expect(fetch).toHaveBeenNthCalledWith(2, 'https://api.sleeper.app/v1/league/league-1/users');
+    expect(fetch).toHaveBeenNthCalledWith(3, 'https://api.sleeper.app/v1/league/league-1/rosters');
+  });
+
+  it('keeps safe fallback names when users and rosters cannot be loaded', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        name: 'Fallback League', total_rosters: 2,
+      }), { status: 200 }))
+      .mockRejectedValueOnce(new Error('users unavailable'))
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 })));
+
+    const settings = await importSleeperLeague('league-2');
+
+    expect(settings.managerNames).toEqual(['Manager 1', 'Manager 2']);
+    expect(settings.name).toBe('Fallback League');
+  });
+});
 
 describe('Sleeper draft import', () => {
   it('matches provider IDs first and normalized names as a fallback', async () => {
