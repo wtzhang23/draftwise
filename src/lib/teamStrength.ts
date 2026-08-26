@@ -1,5 +1,5 @@
 import type { DraftPick, DraftState, Player, Position, RosterSettings } from '../types';
-import { REPLACEMENT_POINTS } from './optimizer';
+import { REPLACEMENT_POINTS, substitutionRiskForPlayer } from './optimizer';
 import { isTeamRosterComplete } from './draft';
 
 const DIRECT_POSITIONS: readonly Position[] = ['QB', 'RB', 'WR', 'TE', 'K', 'DST'];
@@ -14,6 +14,9 @@ export const TEAM_STRENGTH_HEURISTICS = {
   gameAvailabilityWeight: 0.0025,
   neutralCoachUsage: 80,
   coachUsageWeight: 0.001,
+  neutralSubstitutionRisk: 35,
+  substitutionRiskFactorWeight: 0.0008,
+  substitutionRiskBlend: 0.20,
   missingStarterReplacementShare: 0.82,
   unknownPlayerReplacementShare: 0.70,
   unknownPlayerRisk: 45,
@@ -87,7 +90,7 @@ function scoringMultiplier(player: Player, state: DraftState): number {
   return 1;
 }
 
-function evaluatePick(pick: DraftPick, player: Player | undefined, state: DraftState): EvaluatedPick {
+function evaluatePick(pick: DraftPick, player: Player | undefined, state: DraftState, allPlayers: Player[]): EvaluatedPick {
   if (!player) {
     const position = pick.position;
     // Unknown players remain roster-visible, but receive a deliberately below-replacement
@@ -111,11 +114,17 @@ function evaluatePick(pick: DraftPick, player: Player | undefined, state: DraftS
     - TEAM_STRENGTH_HEURISTICS.neutralGameAvailability) * TEAM_STRENGTH_HEURISTICS.gameAvailabilityWeight;
   const usageAdjustment = (finite(player.context?.coachUsage, TEAM_STRENGTH_HEURISTICS.neutralCoachUsage)
     - TEAM_STRENGTH_HEURISTICS.neutralCoachUsage) * TEAM_STRENGTH_HEURISTICS.coachUsageWeight;
+  const substitutionRisk = substitutionRiskForPlayer(player, allPlayers);
+  // Projections and role inputs already reflect some competition, so team strength
+  // receives only a small residual penalty above a neutral rotation-risk level.
+  const substitutionAdjustment = Math.max(0,
+    substitutionRisk - TEAM_STRENGTH_HEURISTICS.neutralSubstitutionRisk,
+  ) * TEAM_STRENGTH_HEURISTICS.substitutionRiskFactorWeight;
   const riskFactor = Math.min(TEAM_STRENGTH_HEURISTICS.maximumRiskFactor, Math.max(
     TEAM_STRENGTH_HEURISTICS.minimumRiskFactor,
     1 - injuryRisk * TEAM_STRENGTH_HEURISTICS.injuryRiskWeight
       - uncertainty * TEAM_STRENGTH_HEURISTICS.uncertaintyWeight
-      + availabilityAdjustment + usageAdjustment,
+      - substitutionAdjustment + availabilityAdjustment + usageAdjustment,
   ));
 
   return {
@@ -126,7 +135,8 @@ function evaluatePick(pick: DraftPick, player: Player | undefined, state: DraftS
     playerName: player.name,
     adjustedProjection: Math.max(0, finite(player.projectedPoints) * scoringMultiplier(player, state) * riskFactor),
     // Uncertainty is included because data/model risk matters even when injury risk is low.
-    risk: Math.min(100, injuryRisk * 0.7 + uncertainty * 0.3),
+    risk: Math.min(100, injuryRisk * 0.6 + uncertainty * 0.2
+      + substitutionRisk * TEAM_STRENGTH_HEURISTICS.substitutionRiskBlend),
     source: 'player-data',
   };
 }
@@ -209,7 +219,8 @@ function summarizeTeam(teamIndex: number, state: DraftState, playerById: Map<str
   // Capacity is a hard boundary: legacy/imported overflow remains auditable in
   // state but cannot improve strength, depth, risk, or roster progress.
   const teamPicks = allTeamPicks.slice(0, rosterTotal);
-  const evaluated = teamPicks.map((pick) => evaluatePick(pick, playerById.get(pick.playerId), state));
+  const allPlayers = [...playerById.values()];
+  const evaluated = teamPicks.map((pick) => evaluatePick(pick, playerById.get(pick.playerId), state, allPlayers));
   const { starters, bench } = assignStarters(evaluated, state.settings.roster);
   const starterProjection = starters.reduce((sum, starter) => sum + finite(starter.riskAdjustedProjection), 0);
 

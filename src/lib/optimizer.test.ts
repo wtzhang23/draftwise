@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { players } from '../data/players';
 import type { DraftState } from '../types';
 import { DEFAULT_SETTINGS } from './draft';
-import { recommendations } from './optimizer';
+import { recommendations, substitutionRiskForPlayer } from './optimizer';
 
 const state: DraftState = {
   settings: DEFAULT_SETTINGS,
@@ -52,5 +52,20 @@ describe('recommendation engine', () => {
 
     expect(peerResult.rosterFit).toBeGreaterThan(userResult.rosterFit);
     expect(peerResult.score).toBeGreaterThan(userResult.score);
+  });
+
+  it('penalizes same-team, same-position competition that raises substitution risk', () => {
+    const target = { ...players[0], id: 'target', name: 'Target', team: 'TST', position: 'WR' as const, projectedPoints: 200 };
+    const weakTeammate = { ...players[1], id: 'weak', name: 'Weak teammate', team: 'TST', position: 'WR' as const, projectedPoints: 50 };
+    const strongTeammate = { ...weakTeammate, id: 'strong', name: 'Strong teammate', projectedPoints: 190 };
+
+    const lowRisk = substitutionRiskForPlayer(target, [target, weakTeammate]);
+    const highRisk = substitutionRiskForPlayer(target, [target, strongTeammate]);
+    const lowRiskRecommendation = recommendations(state, [target, weakTeammate]).find((item) => item.player.id === target.id)!;
+    const highRiskRecommendation = recommendations(state, [target, strongTeammate]).find((item) => item.player.id === target.id)!;
+
+    expect(highRisk).toBeGreaterThan(lowRisk);
+    expect(highRiskRecommendation.substitutionRisk).toBe(highRisk);
+    expect(highRiskRecommendation.score).toBeLessThan(lowRiskRecommendation.score);
   });
 });

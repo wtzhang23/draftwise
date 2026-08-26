@@ -39,11 +39,21 @@ export const MODEL = {
   explanationOpponentDemandThreshold: 3,
   explanationStrongSignalThreshold: 86,
   explanationLowAvailabilityThreshold: 82,
+  credibleTeammateProjectionShare: 0.55,
+  maximumCompetitionRatio: 1.50,
+  minimumSubstitutionRisk: 6,
+  competitionRatioRiskScale: 58,
+  additionalCompetitorRisk: 6,
+  explanationSubstitutionRiskThreshold: 58,
+  neutralSubstitutionRisk: {
+    QB: 18, RB: 34, WR: 38, TE: 30, K: 14, DST: 0,
+  },
   weights: {
     valueOverReplacement: 0.52,
     expectedPoints: 0.16,
     nextTurnAvailability: 0.14,
     injuryPenalty: 0.55,
+    substitutionRisk: 0.10,
     upside: 0.12,
     offenseQuality: 0.45,
     opportunity: 0.18,
@@ -56,6 +66,30 @@ export const MODEL = {
     uncertainty: 0.28,
   },
 } as const;
+
+/**
+ * Estimates rotation/substitution exposure from teammates listed at the same position.
+ * The strongest teammate drives most of the signal, while each additional teammate
+ * projected for a meaningful workload adds a small increment. Season projections
+ * already encode some role competition, so the optimizer later penalizes only risk
+ * above a position-specific neutral level.
+ */
+export function substitutionRiskForPlayer(player: Player, allPlayers: Player[]): number {
+  if (player.position === 'DST') return 0;
+  const teammates = allPlayers.filter((candidate) => candidate.id !== player.id
+    && candidate.team === player.team && candidate.position === player.position);
+  if (!teammates.length) return MODEL.minimumSubstitutionRisk;
+
+  const safeProjection = Number.isFinite(player.projectedPoints) ? Math.max(1, player.projectedPoints) : 1;
+  const ratios = teammates.map((teammate) => (
+    Number.isFinite(teammate.projectedPoints) ? Math.max(0, teammate.projectedPoints) / safeProjection : 0
+  ));
+  const strongestRatio = Math.min(MODEL.maximumCompetitionRatio, Math.max(...ratios));
+  const credibleCompetitors = ratios.filter((ratio) => ratio >= MODEL.credibleTeammateProjectionShare).length;
+  return Math.min(100, MODEL.minimumSubstitutionRisk
+    + strongestRatio * MODEL.competitionRatioRiskScale
+    + Math.max(0, credibleCompetitors - 1) * MODEL.additionalCompetitorRisk);
+}
 
 function scoringMultiplier(player: Player, state: DraftState): number {
   const scoring = state.settings.scoring;
@@ -135,6 +169,12 @@ export function recommendations(state: DraftState, allPlayers: Player[]): Recomm
 
       // Risk tolerance softens injury and model-uncertainty penalties but never removes them.
       const injuryPenalty = player.injuryRisk * (1.15 - state.riskTolerance / 150);
+      const substitutionRisk = substitutionRiskForPlayer(player, allPlayers);
+      // Only above-normal competition is penalized, limiting double counting with
+      // projections, coach usage, role security, and depth-chart security.
+      const substitutionPenalty = Math.max(0,
+        substitutionRisk - MODEL.neutralSubstitutionRisk[player.position],
+      ) * MODEL.weights.substitutionRisk;
       const uncertaintyPenalty = player.context.uncertainty
         * (1.1 - state.riskTolerance / 120) * MODEL.weights.uncertainty;
       const rosterFit = need * MODEL.startingNeedBonus
@@ -168,7 +208,7 @@ export function recommendations(state: DraftState, allPlayers: Player[]): Recomm
         + rosterFit
         + availabilityRisk * MODEL.weights.nextTurnAvailability
         + upside + contextAdjustment + marketEdge
-        - injuryPenalty * MODEL.weights.injuryPenalty - uncertaintyPenalty;
+        - injuryPenalty * MODEL.weights.injuryPenalty - uncertaintyPenalty - substitutionPenalty;
 
       const reasons: string[] = [];
       if (need >= 1) reasons.push(`Fills a starting ${player.position} need`);
@@ -179,13 +219,14 @@ export function recommendations(state: DraftState, allPlayers: Player[]): Recomm
       if (player.context.opportunity >= MODEL.explanationStrongSignalThreshold) reasons.push('High projected share of team opportunities');
       if (player.context.gameAvailability < MODEL.explanationLowAvailabilityThreshold) reasons.push(`${Math.round(player.context.gameAvailability)}% modeled active-game probability`);
       if (player.context.coachUsage >= MODEL.explanationStrongSignalThreshold) reasons.push('Strong coach usage and role-security signal');
+      if (substitutionRisk >= MODEL.explanationSubstitutionRiskThreshold) reasons.push(`${Math.round(substitutionRisk)}% same-position rotation risk`);
       if (player.context.offenseQuality >= 7) reasons.push('Attached to a high-scoring offense');
       if (marketEdge >= 5) reasons.push('Model sees value above current draft market');
       if (player.injuryRisk >= 22) reasons.push(`Risk adjusted for ${player.injuryRisk}% injury signal`);
       if (!reasons.length) reasons.push('Strong risk-adjusted value at this pick');
 
       return {
-        player, score, value, scarcity, availabilityRisk, injuryPenalty, rosterFit,
+        player, score, value, scarcity, availabilityRisk, injuryPenalty, substitutionRisk, rosterFit,
         contextAdjustment, marketEdge,
         confidence: Math.round(Math.max(48, 96 - player.injuryRisk * 0.45 - player.context.uncertainty * 0.65)),
         reasons: reasons.slice(0, 3),

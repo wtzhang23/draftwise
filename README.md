@@ -36,7 +36,7 @@ The recommendation engine separates three questions: projected football output, 
 
 - custom scoring and value over replacement;
 - positional tier depth, opponents' roster needs, draft format, and ADP-based next-turn survival;
-- active-game probability, season injury risk, practice/fitness proxy, coach usage, depth-chart security, and role uncertainty;
+- active-game probability, season injury risk, practice/fitness proxy, coach usage, same-position teammate competition, depth-chart security, and role uncertainty;
 - offensive environment, expected opportunity, line/protection quality, schedule, and team-change impact;
 - upside, projection uncertainty, market disagreement, roster fit, and user risk/scarcity controls.
 

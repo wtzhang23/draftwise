@@ -476,6 +476,7 @@ function App() {
               <Metric label="Offense" value={`${ranked[selected].player.context.offenseQuality > 0 ? '+' : ''}${ranked[selected].player.context.offenseQuality}`} tone={ranked[selected].player.context.offenseQuality > 3 ? 'good' : 'default'} />
               <Metric label="Opportunity" value={`${ranked[selected].player.context.opportunity}/100`} />
               <Metric label="Depth chart" value={`${ranked[selected].player.context.depthChartSecurity}/100`} />
+              <Metric label="Rotation risk" value={`${Math.round(ranked[selected].substitutionRisk)}%`} tone={ranked[selected].substitutionRisk >= 58 ? 'warn' : 'default'} />
               <Metric label="Context adj." value={`${ranked[selected].contextAdjustment >= 0 ? '+' : ''}${ranked[selected].contextAdjustment.toFixed(1)}`} />
               <Metric label="Injury risk" value={`${ranked[selected].player.injuryRisk}%`} tone={ranked[selected].player.injuryRisk > 20 ? 'warn' : 'default'} />
             </div>
@@ -686,7 +687,7 @@ function SourcesModal({
     </div>
     <div className="source-callout"><Info size={21} /><div><strong>Current injury limitation</strong><span>Open nflverse injury reports are not reliable as a current 2026 feed. The baseline uses prior games missed as a conservative risk prior; current medical status still needs a licensed feed or manual review.</span></div></div>
     <div className="sources-list">{providers.map((provider) => <a href={provider.url} target="_blank" rel="noreferrer" key={provider.id}><div className={`provider-icon ${provider.kind}`}><Database size={18} /></div><div><strong>{provider.name}</strong><span>{provider.description}</span><small>{provider.kind} · {provider.status.replace('-', ' ')}</small></div><span className="external">↗</span></a>)}</div>
-    <div className="model-factors"><div><Info size={18} /><strong>Expected-value inputs</strong></div><p>Scoring-adjusted projections · value over replacement · positional scarcity · opponent roster demand · next-turn survival · active-game probability · coach usage · depth-chart security · offensive environment · line quality · role/team-change impact · schedule · market disagreement · injury and model uncertainty.</p></div>
+    <div className="model-factors"><div><Info size={18} /><strong>Expected-value inputs</strong></div><p>Scoring-adjusted projections · value over replacement · positional scarcity · opponent roster demand · next-turn survival · active-game probability · coach usage · same-position teammate competition · depth-chart security · offensive environment · line quality · role/team-change impact · schedule · market disagreement · injury and model uncertainty.</p></div>
     <div className="data-date"><span>{metadata ? `Generated ${new Date(metadata.generatedAt).toLocaleString()} · ${metadata.playerCount} players` : dataUpdatedAt}</span><span>Not medical advice · Provider terms apply</span></div>
   </div></div>;
 }

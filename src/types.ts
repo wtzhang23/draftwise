@@ -107,6 +107,7 @@ export interface Recommendation {
   scarcity: number;
   availabilityRisk: number;
   injuryPenalty: number;
+  substitutionRisk: number;
   rosterFit: number;
   contextAdjustment: number;
   marketEdge: number;
