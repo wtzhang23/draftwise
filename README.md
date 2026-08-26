@@ -4,29 +4,31 @@ DraftWise is a local-first fantasy-football draft companion. It records the room
 
 The checked-in player pool is a reproducible, downloaded/derived baseline. It uses current open redraft consensus rankings and rosters plus the latest completed season's results. It is **not** a current medical-status feed or medical advice.
 
-## Run locally
+## Getting started
 
-Node.js 24 LTS and npm are installed for this workspace under `.tools/` because system-wide installation requires the machine owner's sudo password.
+Install a current [Node.js LTS release](https://nodejs.org/), which includes npm. Then clone the repository and install its dependencies:
 
 ```bash
-export PATH="$PWD/.tools/bin:$PATH"
-npm run data:download
+npm install
 npm run dev
 ```
 
-Then open the local URL printed by Vite. Other useful commands:
+Open the local URL printed by Vite. The generated player pool is committed, so no API keys or data download are required for the first run.
+
+Useful commands:
 
 ```bash
 npm test
 npm run backtest
 npm run build
+npm run data:download
 ```
-
-The `.tools/` installation is intentionally ignored by git. On another machine, install a current Node.js LTS release normally and run `npm install`.
 
 `public/data/player-pool.json` has already been generated, so the app works immediately. Run `npm run data:download` whenever you want to refresh it. The script downloads 2026 PPR redraft ECR from DynastyProcess, 2026 nflverse rosters, and 2025 nflverse regular-season player results. It writes source URLs and a generation timestamp into the output file.
 
-In the app, open **Local real data** in the header to paste a Sleeper draft ID. **Sync picks now** imports the room; auto-sync polls every 10 seconds. Manual entry remains available, including an explicit “record unlisted player” path for spelling/identity gaps. Unmatched picks still advance the board and affect positional demand when Sleeper supplies a position.
+In the app, open **Local real data** in the header to paste a Sleeper draft ID. **Sync picks now** imports the room; auto-sync polls every 10 seconds. Manual entry remains available, including an explicit “record unlisted player” path for spelling/identity gaps. Unmatched picks still advance the board and affect positional demand when Sleeper supplies a position. If Sleeper and an analytics source disagree, use the position selector beside a recorded pick to override its roster eligibility.
+
+League settings define the exact QB, RB, WR, TE, FLEX, K, DST, and bench requirements. A team is complete only when it reaches the configured roster size and fills all required positional slots; the draft entry prevents picks that would make those requirements impossible to satisfy.
 
 ## What the prototype models
 
@@ -69,8 +71,8 @@ An optional real-data pipeline is included for 2021–2025. It downloads each se
 ```bash
 python3 -m venv .venv-backtest
 .venv-backtest/bin/pip install -r scripts/requirements-backtest.txt
-PATH="$PWD/.tools/bin:$PATH" .venv-backtest/bin/python scripts/prepare_historical_data.py
-PATH="$PWD/.tools/bin:$PATH" npm run backtest:historical
+.venv-backtest/bin/python scripts/prepare_historical_data.py
+npm run backtest:historical
 ```
 
 The first diagnostic run is intentionally not presented as proof of superiority: the prototype optimizer beat random-within-tier drafting but trailed ADP and need-aware baselines on realized starter value. That result exposed an availability double-counting error, which was corrected, but further tuning must use training seasons and a genuinely untouched holdout rather than optimizing against the reported years.

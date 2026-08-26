@@ -4,16 +4,21 @@ import {
   Activity, BarChart3, BrainCircuit, Check, ChevronDown, CircleHelp, Database,
   Download, GripVertical, Info, Minus, Pause, Play, Plus, RotateCcw, Search, Settings,
   ShieldCheck, SlidersHorizontal, Sparkles, Target, Trash2, TrendingUp, Undo2,
-  TimerReset, Upload, UserRoundCheck, Users, X, Zap,
+  TimerReset, Trophy, Upload, UserRoundCheck, Users, X, Zap,
 } from 'lucide-react';
 import { players as demoPlayers, dataUpdatedAt } from './data/players';
 import { providers } from './data/providers';
-import { DEFAULT_SETTINGS, defaultManagerNames, rosterCounts, teamAtPick } from './lib/draft';
+import {
+  canTeamDraftPosition, DEFAULT_SETTINGS, defaultManagerNames, isTeamRosterComplete, nextOpenDraftPick,
+  rosterCounts, rosterSize, teamAtPick, teamPickCount,
+} from './lib/draft';
 import { fuzzyPlayers } from './lib/fuzzy';
 import { recommendations } from './lib/optimizer';
 import { exportState, importState, loadState, saveState } from './lib/storage';
 import { loadDownloadedPlayerData } from './lib/playerData';
 import { importSleeperDraftPicks, importSleeperLeague } from './lib/sleeper';
+import { calculateTeamStrengths } from './lib/teamStrength';
+import type { TeamStrengthSummary } from './lib/teamStrength';
 import type { DraftPick, DraftState, LeagueSettings, Player, PlayerDataMetadata, Position, RosterSettings } from './types';
 
 const POSITIONS: Array<Position | 'ALL'> = ['ALL', 'QB', 'RB', 'WR', 'TE', 'K', 'DST'];
@@ -65,6 +70,32 @@ function Metric({ label, value, tone = 'default' }: { label: string; value: stri
   return <div className="metric"><span>{label}</span><strong className={tone}>{value}</strong></div>;
 }
 
+function TeamStrengthBoard({ summaries, userTeamIndex, final = false }: {
+  summaries: TeamStrengthSummary[];
+  userTeamIndex: number;
+  final?: boolean;
+}) {
+  const ranked = [...summaries].sort((a, b) => a.rank - b.rank);
+  const leader = ranked[0];
+  return <section className={`team-strength-board ${final ? 'final-strengths' : ''}`} aria-label={final ? 'Final team strengths' : 'Live team strengths'}>
+    <div className="strength-board-head"><div><div className="eyebrow accent"><Trophy size={14} /> {final ? 'Final draft report' : 'Live league power rankings'}</div><h3>{final ? `${leader?.teamName ?? 'The leader'} finishes with the strongest projected roster` : 'How every roster stacks up right now'}</h3><p>Open starter slots use conservative replacement estimates, keeping comparisons fair between turns.</p></div>{leader && <div className="strength-leader"><span>Current leader</span><strong>#{leader.rank} {leader.teamName}</strong><em>{Math.round(leader.overallScore)} model value</em></div>}</div>
+    <div className="strength-table-head"><span>Rank & manager</span><span>Roster</span><span>Starters</span><span>Depth</span><span>Risk</span><span>Model value</span></div>
+    <div className="strength-list">{ranked.map((team) => {
+      const progress = team.rosterTotal ? Math.min(100, team.rosterFilled / team.rosterTotal * 100) : 0;
+      return <article className={`${team.teamIndex === userTeamIndex ? 'user-team' : ''} ${team.complete ? 'complete' : ''}`} key={team.teamIndex}>
+        <div className="strength-team"><b>#{team.rank}</b><span><strong>{team.teamName}{team.teamIndex === userTeamIndex ? ' (You)' : ''}</strong><small>{team.complete ? 'Roster complete' : `${team.missingStarterSlots} projected starter slot${team.missingStarterSlots === 1 ? '' : 's'} open`}{team.unknownPlayerCount ? ` · ${team.unknownPlayerCount} unlisted` : ''}</small></span></div>
+        <div className="strength-progress"><span>{team.rosterFilled}/{team.rosterTotal}</span><i><b style={{ width: `${progress}%` }} /></i></div>
+        <div><strong>{Math.round(team.riskAdjustedStarterProjection)}</strong><small>risk-adjusted pts</small></div>
+        <div><strong>{Math.round(team.benchDepth)}</strong><small>above replacement</small></div>
+        <div><strong className={team.averageRisk > 25 ? 'risk-high' : team.averageRisk < 14 ? 'risk-low' : ''}>{Math.round(team.averageRisk)}%</strong><small>injury + model</small></div>
+        <div className="strength-score">{Math.round(team.overallScore)}</div>
+        {team.overflowCount > 0 && <div className="overflow-warning">{team.overflowCount} overflow pick{team.overflowCount === 1 ? '' : 's'} ignored</div>}
+      </article>;
+    })}</div>
+    {final && <div className="final-method"><ShieldCheck size={17} /><span><strong>What this ranking means</strong>Starter projection is scoring-adjusted and risk-adjusted; bench depth only receives credit above positional replacement. It is a forecast, not a guaranteed finish.</span></div>}
+  </section>;
+}
+
 function App() {
   const [state, setState] = useState<DraftState>(initialState);
   const [playerPool, setPlayerPool] = useState<Player[]>(demoPlayers);
@@ -86,6 +117,7 @@ function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchSectionRef = useRef<HTMLDivElement>(null);
   const clockDeadlineRef = useRef(Date.now() + DEFAULT_PICK_CLOCK_SECONDS * 1000);
+  const draftInteractionLockedRef = useRef(false);
   const syncingSleeper = useRef(false);
 
   useEffect(() => saveState(state), [state]);
@@ -124,7 +156,7 @@ function App() {
       if (event.key === 'Escape') {
         setSearchOpen(false);
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && !draftInteractionLockedRef.current) {
         event.preventDefault();
         setSearchOpen(true);
         searchInputRef.current?.focus();
@@ -143,20 +175,34 @@ function App() {
   const draftedIds = useMemo(() => new Set(state.picks.map((pick) => pick.playerId)), [state.picks]);
   const available = useMemo(() => playerPool.filter((player) => !draftedIds.has(player.id)), [draftedIds, playerPool]);
   const matches = useMemo(() => fuzzyPlayers(query, available), [query, available]);
-  const currentOverall = state.picks.length + 1;
-  const currentTeam = teamAtPick(currentOverall, state.settings.teams, state.settings.format);
+  const nextDraftPick = useMemo(() => nextOpenDraftPick(state.picks, state.settings, playerPool), [state.picks, state.settings, playerPool]);
+  const draftComplete = nextDraftPick === null;
+  const currentOverall = nextDraftPick?.overall ?? Math.max(state.picks.length, state.picks.reduce((maximum, pick) => Math.max(maximum, pick.overall), 0));
+  const currentTeam = nextDraftPick?.teamIndex ?? state.userTeamIndex;
   const round = Math.floor((currentOverall - 1) / state.settings.teams) + 1;
   const pickInRound = (currentOverall - 1) % state.settings.teams + 1;
   const isUserTurn = currentTeam === state.userTeamIndex;
+  const rosterCapacity = rosterSize(state.settings.roster);
+  const ownPickCount = teamPickCount(state.picks, state.userTeamIndex);
+  const ownRosterComplete = isTeamRosterComplete(state.picks, state.userTeamIndex, state.settings.roster, playerPool);
+  const entryTeamComplete = isTeamRosterComplete(state.picks, entryTeamIndex, state.settings.roster, playerPool);
+  draftInteractionLockedRef.current = draftComplete || entryTeamComplete;
   const ownCounts = rosterCounts(state.picks, state.userTeamIndex, playerPool);
   const ownPicks = state.picks.filter((pick) => pick.teamIndex === state.userTeamIndex)
-    .map((pick) => playerPool.find((player) => player.id === pick.playerId)).filter(Boolean) as Player[];
+    .map((pick) => {
+      const player = playerPool.find((candidate) => candidate.id === pick.playerId);
+      return player ? { ...player, position: pick.position ?? player.position } : undefined;
+    }).filter(Boolean) as Player[];
+  const teamStrengths = useMemo(() => calculateTeamStrengths(state, playerPool), [state, playerPool]);
 
   useEffect(() => {
     clockDeadlineRef.current = Date.now() + DEFAULT_PICK_CLOCK_SECONDS * 1000;
     setClockSeconds(DEFAULT_PICK_CLOCK_SECONDS);
     setClockRunning(true);
   }, [currentOverall]);
+  useEffect(() => {
+    if (draftComplete) setClockRunning(false);
+  }, [draftComplete]);
   useEffect(() => {
     if (!clockRunning) return;
     const updateClock = () => setClockSeconds(Math.max(0, Math.ceil((clockDeadlineRef.current - Date.now()) / 1000)));
@@ -241,6 +287,11 @@ function App() {
   }, [state.connections.autoSyncSleeper, state.connections.sleeperDraftId, syncSleeper]);
 
   const addPick = (player: Player, teamIndex = entryTeamIndex) => {
+    if (!canTeamDraftPosition(state.picks, teamIndex, player.position, state.settings.roster, playerPool)) {
+      setSearchOpen(false);
+      setToast(`${teamLabel(teamIndex)} cannot add ${player.position}; reserve the remaining spots for required positions`);
+      return;
+    }
     const pick: DraftPick = {
       id: `${Date.now()}-${player.id}`, playerId: player.id, overall: currentOverall, teamIndex,
     };
@@ -254,6 +305,11 @@ function App() {
   const recordUnlistedPick = () => {
     const displayName = query.trim();
     if (!displayName) return;
+    if (!canTeamDraftPosition(state.picks, entryTeamIndex, unknownPosition, state.settings.roster, playerPool)) {
+      setSearchOpen(false);
+      setToast(`${teamLabel(entryTeamIndex)} cannot add ${unknownPosition}; reserve the remaining spots for required positions`);
+      return;
+    }
     const pick: DraftPick = {
       id: `${Date.now()}-unlisted`,
       playerId: `unlisted-${Date.now()}`,
@@ -270,11 +326,25 @@ function App() {
   };
 
   const updatePickTeam = (pickId: string, teamIndex: number) => {
+    const existing = state.picks.find((pick) => pick.id === pickId);
+    const movedPlayer = existing && (existing.position ?? playerPool.find((player) => player.id === existing.playerId)?.position);
+    if (existing?.teamIndex !== teamIndex && !canTeamDraftPosition(state.picks, teamIndex, movedPlayer, state.settings.roster, playerPool)) {
+      setToast(`${teamLabel(teamIndex)} has no valid roster slot for that pick`);
+      return;
+    }
     setState((previous) => ({
       ...previous,
       picks: previous.picks.map((pick) => pick.id === pickId ? { ...pick, teamIndex } : pick),
     }));
     setToast(`Pick reassigned to ${teamLabel(teamIndex)}; recommendations updated`);
+  };
+
+  const updatePickPosition = (pickId: string, position: Position | undefined) => {
+    setState((previous) => ({
+      ...previous,
+      picks: previous.picks.map((pick) => pick.id === pickId ? { ...pick, position } : pick),
+    }));
+    setToast(position ? `Position override set to ${position}; roster status recalculated` : 'Position override removed; using analytics data');
   };
 
   const renameManager = (teamIndex: number, name: string) => {
@@ -323,17 +393,17 @@ function App() {
 
       <main className="workspace">
         <aside className="left-rail">
-          <section className={`clock-card ${isUserTurn ? 'your-turn' : ''} ${clockSeconds === 0 ? 'expired' : ''}`}>
-            <div className="eyebrow"><span className="pulse-ring" /> {teamLabel(currentTeam)} — on the clock</div>
-            <div className="pick-number"><strong>{round}.{String(pickInRound).padStart(2, '0')}</strong><span>Pick {currentOverall} overall</span></div>
-            <div className="clock-description"><span>Local pick timer</span><em>Not synced to Sleeper</em></div>
-            <div className="clock" role="timer" aria-label={`${clockMinutes} minutes ${clockRemainder} seconds remaining`}><span>{String(clockMinutes).padStart(2, '0')}</span><i>:</i><span>{String(clockRemainder).padStart(2, '0')}</span></div>
-            <div className="clock-controls"><button aria-label={clockRunning ? 'Pause pick timer' : 'Resume pick timer'} onClick={toggleClock} disabled={clockSeconds === 0}>{clockRunning ? <Pause size={13} /> : <Play size={13} />}{clockRunning ? 'Pause' : 'Resume'}</button><button aria-label="Reset pick timer to two minutes" onClick={resetClock}><TimerReset size={13} /> Reset 2:00</button></div>
-            <div className="next-turn"><Target size={15} /> Your slot: {state.settings.draftSlot}</div>
+          <section className={`clock-card ${isUserTurn && !draftComplete ? 'your-turn' : ''} ${clockSeconds === 0 ? 'expired' : ''} ${draftComplete ? 'draft-finished' : ''}`}>
+            <div className="eyebrow"><span className="pulse-ring" /> {draftComplete ? 'Every roster is complete' : `${teamLabel(currentTeam)} — on the clock`}</div>
+            <div className="pick-number"><strong>{draftComplete ? 'DONE' : `${round}.${String(pickInRound).padStart(2, '0')}`}</strong><span>{draftComplete ? `${state.picks.length} selections recorded` : `Pick ${currentOverall} overall`}</span></div>
+            {!draftComplete && <><div className="clock-description"><span>Local pick timer</span><em>Not synced to Sleeper</em></div>
+              <div className="clock" role="timer" aria-label={`${clockMinutes} minutes ${clockRemainder} seconds remaining`}><span>{String(clockMinutes).padStart(2, '0')}</span><i>:</i><span>{String(clockRemainder).padStart(2, '0')}</span></div>
+              <div className="clock-controls"><button aria-label={clockRunning ? 'Pause pick timer' : 'Resume pick timer'} onClick={toggleClock} disabled={clockSeconds === 0}>{clockRunning ? <Pause size={13} /> : <Play size={13} />}{clockRunning ? 'Pause' : 'Resume'}</button><button aria-label="Reset pick timer to two minutes" onClick={resetClock}><TimerReset size={13} /> Reset 2:00</button></div></>}
+            <div className="next-turn"><Target size={15} /> {draftComplete ? 'Final strengths ready below' : `Your slot: ${state.settings.draftSlot}`}</div>
           </section>
 
           <section className="rail-section">
-            <div className="section-title"><span>My roster</span><em>{ownPicks.length}/{Object.values(state.settings.roster).reduce((a, b) => a + b, 0)}</em></div>
+            <div className="section-title"><span>My roster</span><em className={ownRosterComplete ? 'roster-finished' : ''}>{ownRosterComplete ? 'Complete' : `${ownPickCount}/${rosterCapacity}`}</em></div>
             <div className="roster-list">
               {(['QB', 'RB', 'WR', 'TE', 'FLEX'] as const).map((slot) => {
                 const slotPlayer = slot === 'FLEX' ? undefined : ownPicks.find((player) => player.position === slot);
@@ -343,6 +413,7 @@ function App() {
                 </div>;
               })}
             </div>
+            {ownRosterComplete && <div className="roster-complete-note"><Check size={14} /><span><strong>Roster finished</strong>No additional players can be assigned here.</span></div>}
             <button className="text-button"><Users size={15} /> View full roster <span>→</span></button>
           </section>
 
@@ -356,17 +427,17 @@ function App() {
 
         <section className="main-column">
           <div className="recommendation-heading">
-            <div><div className="eyebrow accent"><Sparkles size={14} /> Decision engine</div><h1>Best pick right now</h1><p>Optimized for your roster, this room, and who may not make it back.</p></div>
-            <div className="confidence"><span>Model confidence</span><strong>{top?.confidence ?? 0}%</strong><div><i style={{ width: `${top?.confidence ?? 0}%` }} /></div></div>
+            <div><div className="eyebrow accent">{draftComplete ? <Trophy size={14} /> : <Sparkles size={14} />} {draftComplete ? 'Draft complete' : ownRosterComplete ? 'Roster finished' : 'Decision engine'}</div><h1>{draftComplete ? 'Final team strengths' : ownRosterComplete ? 'Your team is complete' : 'Best pick right now'}</h1><p>{draftComplete ? 'Every roster is full. Here is the final risk-adjusted outlook.' : ownRosterComplete ? 'No more players can overflow your roster. Track the remaining teams below.' : 'Optimized for your roster, this room, and who may not make it back.'}</p></div>
+            {!ownRosterComplete && !draftComplete && <div className="confidence"><span>Model confidence</span><strong>{top?.confidence ?? 0}%</strong><div><i style={{ width: `${top?.confidence ?? 0}%` }} /></div></div>}
           </div>
 
-          {lastRecorded && lastPlayer && <div className="impact-banner">
+          {!ownRosterComplete && !draftComplete && lastRecorded && lastPlayer && <div className="impact-banner">
             <div className="impact-icon"><TrendingUp size={17} /></div>
             <div><strong>Board recalculated after {teamLabel(lastRecorded.teamIndex)} took {lastPlayer.name}</strong><span>{previousTop?.id === lastPlayer.id ? `${top?.player.name ?? 'The next player'} moves into the top recommendation.` : `${top?.player.name ?? 'The top recommendation'} remains the best risk-adjusted decision.`} Opponent needs and position availability have been refreshed.</span></div>
             <button onClick={() => setLastRecorded(null)} aria-label="Dismiss update"><X size={15} /></button>
           </div>}
 
-          {top && <article className="hero-card">
+          {!ownRosterComplete && !draftComplete && top && <article className="hero-card">
             <div className="hero-glow" />
             <div className="rank-badge">#1</div>
             <div className="hero-player"><PlayerAvatar player={top.player} large /><div><span className="position-tag" style={positionStyle(top.player.position)}>{top.player.position}</span><h2>{top.player.name}</h2><p>{top.player.team} · Bye {top.player.bye} · Tier {top.player.tier}</p></div></div>
@@ -386,8 +457,8 @@ function App() {
               <button className="button ghost" onClick={() => setSelected(0)}><BrainCircuit size={17} /> Explain score</button></div>
           </article>}
 
-          <div className="alternatives-head"><div><h3>Next best options</h3><span>Click a player to inspect the full model</span></div><div className="position-tabs">{POSITIONS.map((position) => <button className={state.activePosition === position ? 'active' : ''} onClick={() => setState({ ...state, activePosition: position })} key={position}>{position}</button>)}</div></div>
-          <div className="player-table">
+          {!ownRosterComplete && !draftComplete && <div className="alternatives-head"><div><h3>Next best options</h3><span>Click a player to inspect the full model</span></div><div className="position-tabs">{POSITIONS.map((position) => <button className={state.activePosition === position ? 'active' : ''} onClick={() => setState({ ...state, activePosition: position })} key={position}>{position}</button>)}</div></div>}
+          {!ownRosterComplete && !draftComplete && <div className="player-table">
             <div className="table-head"><span>Player</span><span>Projection</span><span>Availability</span><span>Fit</span><span>Score</span><span /></div>
             {ranked.slice(1, 7).map((recommendation, index) => <div className={`table-row ${selected === index + 1 ? 'selected' : ''}`} key={recommendation.player.id} onClick={() => setSelected(index + 1)}>
               <div className="player-cell"><b>{index + 2}</b><PlayerAvatar player={recommendation.player} /><div><strong>{recommendation.player.name}</strong><small><span style={{ color: POSITION_COLOR[recommendation.player.position] }}>{recommendation.player.position}</span> · {recommendation.player.team} · Tier {recommendation.player.tier}</small></div></div>
@@ -397,9 +468,9 @@ function App() {
               <div className="score-pill">{Math.round(recommendation.score)}</div>
               <button className="draft-mini" onClick={(event) => { event.stopPropagation(); addPick(recommendation.player, isUserTurn ? state.userTeamIndex : currentTeam); }}>{isUserTurn ? 'Draft' : 'Record'}</button>
             </div>)}
-          </div>
+          </div>}
 
-          {ranked[selected] && <section className="model-strip">
+          {!ownRosterComplete && !draftComplete && ranked[selected] && <section className="model-strip">
             <div className="strip-title"><Activity size={17} /><div><strong>Why {ranked[selected].player.name} ranks here</strong><span>Context signals are modestly weighted to avoid double-counting provider projections.</span></div></div>
             <div className="strip-metrics">
               <Metric label="Offense" value={`${ranked[selected].player.context.offenseQuality > 0 ? '+' : ''}${ranked[selected].player.context.offenseQuality}`} tone={ranked[selected].player.context.offenseQuality > 3 ? 'good' : 'default'} />
@@ -409,22 +480,24 @@ function App() {
               <Metric label="Injury risk" value={`${ranked[selected].player.injuryRisk}%`} tone={ranked[selected].player.injuryRisk > 20 ? 'warn' : 'default'} />
             </div>
           </section>}
+          {ownRosterComplete && !draftComplete && <div className="user-roster-finished"><Check size={19} /><div><strong>Your {rosterCapacity}-player roster is locked</strong><span>Draft entry automatically skips your slot. You can keep recording peer picks while the power rankings update.</span></div></div>}
+          <TeamStrengthBoard summaries={teamStrengths} userTeamIndex={state.userTeamIndex} final={draftComplete} />
         </section>
 
         <aside className="right-rail">
           <div className="search-section" ref={searchSectionRef}>
-            <div className="entry-kicker"><span className="pulse-ring" /> Live draft entry · Pick {currentOverall}</div>
-            <h2>Who did they draft?</h2>
-            <p className="entry-help">Choose the team on the clock, then select the player they just picked. Your recommendations recalculate immediately.</p>
+            <div className="entry-kicker"><span className="pulse-ring" /> {draftComplete ? 'Draft complete' : `Live draft entry · Pick ${currentOverall}`}</div>
+            <h2>{draftComplete ? 'All teams are finished' : entryTeamComplete ? 'This roster is complete' : 'Who did they draft?'}</h2>
+            <p className="entry-help">{draftComplete ? 'The board is locked against overflow. Review the final team strengths below.' : entryTeamComplete ? 'Choose another incomplete team. No extra pick will be added to this roster.' : 'Choose the team on the clock, then select the player they just picked. Your recommendations recalculate immediately.'}</p>
             <label className="team-picker">
               <span>Picking team</span>
               <div><Users size={16} /><select value={entryTeamIndex} onChange={(event) => setEntryTeamIndex(Number(event.target.value))}>
-                {Array.from({ length: state.settings.teams }, (_, index) => <option value={index} key={index}>{teamLabel(index)}{index === currentTeam ? ' · on the clock' : ''}</option>)}
+                {Array.from({ length: state.settings.teams }, (_, index) => <option value={index} disabled={isTeamRosterComplete(state.picks, index, state.settings.roster, playerPool)} key={index}>{teamLabel(index)}{isTeamRosterComplete(state.picks, index, state.settings.roster, playerPool) ? ' · Complete' : index === currentTeam ? ' · on the clock' : ''}</option>)}
               </select><ChevronDown size={15} /></div>
             </label>
             <label className="manager-picker"><span>Person picking</span><div><Users size={16} /><input value={state.settings.managerNames[entryTeamIndex] ?? ''} placeholder={`Manager ${entryTeamIndex + 1}`} onChange={(event) => renameManager(entryTeamIndex, event.target.value)} /><em>Team {entryTeamIndex + 1}</em></div></label>
             <label className="player-picker"><span>Player selected</span>
-              <div className="search-box"><Search size={17} /><input ref={searchInputRef} role="combobox" aria-label="Player selected" aria-autocomplete="list" aria-expanded={searchOpen} aria-controls="player-search-menu" aria-activedescendant={searchOpen && matches[searchHighlight] ? `player-option-${matches[searchHighlight].id}` : undefined} value={query} placeholder={`Search the player ${teamLabel(entryTeamIndex)} drafted`} onFocus={() => setSearchOpen(true)} onKeyDown={handleSearchKeyDown} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} /><kbd>⌘ K</kbd></div>
+              <div className="search-box"><Search size={17} /><input ref={searchInputRef} disabled={draftComplete || entryTeamComplete} role="combobox" aria-label="Player selected" aria-autocomplete="list" aria-expanded={searchOpen} aria-controls="player-search-menu" aria-activedescendant={searchOpen && matches[searchHighlight] ? `player-option-${matches[searchHighlight].id}` : undefined} value={query} placeholder={entryTeamComplete ? 'Roster complete' : `Search the player ${teamLabel(entryTeamIndex)} drafted`} onFocus={() => { if (!entryTeamComplete && !draftComplete) setSearchOpen(true); }} onKeyDown={handleSearchKeyDown} onChange={(event) => { setQuery(event.target.value); setSearchOpen(true); }} /><kbd>⌘ K</kbd></div>
             </label>
             {searchOpen && <div className="autocomplete" id="player-search-menu" role="listbox" aria-label="Available players">
               <div className="auto-label"><span>{query ? `Best matches for “${query}”` : 'Top available'}</span><em>Recording for {teamLabel(entryTeamIndex)}</em><button className="close-autocomplete" aria-label="Close player selection" onClick={() => setSearchOpen(false)}><X size={14} /></button></div>
@@ -443,8 +516,8 @@ function App() {
               const player = playerPool.find((candidate) => candidate.id === pick.playerId);
               const pickRound = Math.floor((pick.overall - 1) / state.settings.teams) + 1;
               const pickSlot = (pick.overall - 1) % state.settings.teams + 1;
-              const position = player?.position ?? pick.position;
-              return <div className={pick.teamIndex === state.userTeamIndex ? 'mine' : ''} key={pick.id}><span className="pick-index">{pickRound}.{String(pickSlot).padStart(2, '0')}</span>{player ? <PlayerAvatar player={player} /> : <div className="avatar unknown-avatar" style={position ? positionStyle(position) : undefined}>?</div>}<div className="activity-player"><strong>{player?.name ?? pick.displayName ?? 'Unlisted player'}</strong><small>{position ?? 'Position unknown'} · {player?.team ?? pick.team ?? 'No analytics row'}</small></div><label className="activity-team"><span className="sr-only">Change drafting team</span><select value={pick.teamIndex} onChange={(event) => updatePickTeam(pick.id, Number(event.target.value))}>{Array.from({ length: state.settings.teams }, (_, index) => <option value={index} key={index}>{teamLabel(index)}</option>)}</select></label></div>;
+              const position = pick.position ?? player?.position;
+              return <div className={pick.teamIndex === state.userTeamIndex ? 'mine' : ''} key={pick.id}><span className="pick-index">{pickRound}.{String(pickSlot).padStart(2, '0')}</span>{player ? <PlayerAvatar player={player} /> : <div className="avatar unknown-avatar" style={position ? positionStyle(position) : undefined}>?</div>}<div className="activity-player"><strong>{player?.name ?? pick.displayName ?? 'Unlisted player'}</strong><small>{position ?? 'Position unknown'}{pick.position && player ? ' (override)' : ''} · {player?.team ?? pick.team ?? 'No analytics row'}</small></div><div className="activity-controls"><label className="activity-team"><span className="sr-only">Change drafting team</span><select value={pick.teamIndex} onChange={(event) => updatePickTeam(pick.id, Number(event.target.value))}>{Array.from({ length: state.settings.teams }, (_, index) => <option value={index} key={index}>{teamLabel(index)}</option>)}</select></label><label className="activity-position"><span className="sr-only">Override player position</span><select aria-label={`Position for ${player?.name ?? pick.displayName ?? 'unlisted player'}`} value={pick.position ?? ''} onChange={(event) => updatePickPosition(pick.id, event.target.value ? event.target.value as Position : undefined)}>{player && <option value="">Data: {player.position}</option>}{!player && <option value="">Position unknown</option>}{(['QB', 'RB', 'WR', 'TE', 'K', 'DST'] as Position[]).map((candidate) => <option value={candidate} key={candidate}>{candidate}{candidate === pick.position ? ' · Override' : ''}</option>)}</select></label></div></div>;
             })}
           </div>
           <div className="rail-footer">

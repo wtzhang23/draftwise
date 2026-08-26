@@ -71,3 +71,17 @@ describe('local pick timer', () => {
     expect(timer.textContent).toBe('02:00');
   });
 });
+
+describe('recorded pick corrections', () => {
+  it('lets the user override and restore a provider position', () => {
+    render(<App />);
+    const positionSelect = screen.getByRole('combobox', { name: 'Position for Ja’Marr Chase' });
+
+    fireEvent.change(positionSelect, { target: { value: 'RB' } });
+    expect(screen.getByText(/RB \(override\)/)).not.toBeNull();
+
+    fireEvent.change(positionSelect, { target: { value: '' } });
+    expect(screen.queryByText(/RB \(override\)/)).toBeNull();
+    expect((positionSelect as HTMLSelectElement).value).toBe('');
+  });
+});
